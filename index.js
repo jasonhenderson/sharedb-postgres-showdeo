@@ -6,7 +6,7 @@ const pg = require('pg');
 function PostgresDB(options) {
   if (!(this instanceof PostgresDB)) return new PostgresDB(options);
 
-  this.shard = options.shard || 1;
+  this.shard = 1;//options.shard || 1;
 
   DB.call(this, options);
 
@@ -68,7 +68,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
     const query = {
       name: 'sdb-commit-op-and-snap',
       text: `WITH snapshot_id AS (
-        INSERT INTO shared_snapshot (collection_id, data_id, data_type, version, data)
+        INSERT INTO show${this.shard}.shared_snapshot (collection_id, data_id, data_type, version, data)
         SELECT $1 collection_id, $2 data_id,
                $3 snap_type, $4 snap_v, $5 snap_data
         WHERE $4 = (
@@ -86,7 +86,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
           UPDATE SET data_type = $3, version = $4, data = $5
         RETURNING version
       )
-      INSERT INTO ops (collection_id, data_id, version, operation)
+      INSERT INTO show${this.shard}.shared_op (collection_id, data_id, version, operation)
       SELECT $1 collection_id, $2 data_id,
              $6 op_v, $7 op
       WHERE (
