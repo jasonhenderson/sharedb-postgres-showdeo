@@ -1,5 +1,5 @@
-var DB = require("sharedb").DB;
-var pg = require("pg");
+const DB = require("sharedb").DB;
+const pg = require("pg");
 
 // Postgres-backed ShareDB database
 
@@ -8,9 +8,11 @@ function PostgresDB(options) {
   DB.call(this, options);
 
   this.closed = false;
+  this.shard = options.shard || "1";
 
   this.pool = new pg.Pool(options);
-};
+}
+
 module.exports = PostgresDB;
 
 PostgresDB.prototype = Object.create(DB.prototype);
@@ -57,8 +59,6 @@ PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, c
     *
     * If 0 zeros are return then the callback must return false
     *
-    * Casting is required as postgres thinks that collection and doc_id are
-    * not varchar
     */
     // ZW: We also should have the first op version be 0 (the actual value
     // of op.v) instead of 1, in order to match the reference MemoryDB
@@ -67,36 +67,36 @@ PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, c
     const query = {
       name: "sdb-commit-op-and-snap",
       text: `WITH snapshot_id AS (
-        INSERT INTO snapshots (collection, doc_id, doc_type, version, data)
-        SELECT $1::varchar collection, $2::varchar doc_id,
+        INSERT INTO shared_snapshot (collection_id, data_id, data_type, version, data)
+        SELECT $1 collection_id, $2 data_id,
                $3 snap_type, $4 snap_v, $5 snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
-          FROM snapshots
-          WHERE collection = $1 AND doc_id = $2
+          FROM show${this.shard}.shared_snapshot
+          WHERE collection_id = $1 AND data_id = $2
           FOR UPDATE
         ) OR NOT EXISTS (
           SELECT 1
-          FROM snapshots
-          WHERE collection = $1 AND doc_id = $2
+          FROM show${this.shard}.shared_snapshot
+          WHERE collection_id = $1 AND data_id = $2
           FOR UPDATE
         )
-        ON CONFLICT (collection, doc_id) DO 
-          UPDATE SET doc_type = $3, version = $4, data = $5
+        ON CONFLICT (collection_id, data_id) DO 
+          UPDATE SET data_type = $3, version = $4, data = $5
         RETURNING version
       )
-      INSERT INTO ops (collection, doc_id, version, operation)
-      SELECT $1::varchar collection, $2::varchar doc_id,
+      INSERT INTO ops (collection_id, data_id, version, operation)
+      SELECT $1 collection_id, $2 data_id,
              $6 op_v, $7 op
       WHERE (
         $6 = (
           SELECT max(version)+1
-          FROM ops
-          WHERE collection = $1 AND doc_id = $2
+          FROM show${this.shard}.shared_op
+          WHERE collection_id = $1 AND data_id = $2
         ) OR NOT EXISTS (
           SELECT 1
-          FROM ops
-          WHERE collection = $1 AND doc_id = $2
+          FROM show${this.shard}.shared_op
+          WHERE collection_id = $1 AND data_id = $2
         )
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
       RETURNING version`,
@@ -131,7 +131,7 @@ PostgresDB.prototype.getSnapshot = function (collection, id, fields, options, ca
       return;
     }
     client.query(
-      "SELECT version, data, doc_type FROM snapshots WHERE collection = $1 AND doc_id = $2 LIMIT 1",
+      "SELECT version, data, data_type FROM show${this.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = $2 LIMIT 1",
       [collection, id],
       function (err, res) {
         done();
@@ -140,17 +140,17 @@ PostgresDB.prototype.getSnapshot = function (collection, id, fields, options, ca
           return;
         }
         if (res.rows.length) {
-          var row = res.rows[0];
-          var snapshot = new PostgresSnapshot(
+          const row = res.rows[0];
+          const snapshot = new PostgresSnapshot(
             id,
             row.version,
-            row.doc_type,
+            row.data_type,
             row.data,
             undefined // TODO: metadata
           );
           callback(null, snapshot);
         } else {
-          var snapshot = new PostgresSnapshot(
+          const snapshot = new PostgresSnapshot(
             id,
             0,
             null,
@@ -183,7 +183,7 @@ PostgresDB.prototype.getOps = function (collection, id, from, to, options, callb
 
     // ZW: Add explicit row ordering here
     client.query(
-      "SELECT version, operation FROM ops WHERE collection = $1 AND doc_id =" +
+      "SELECT version, operation FROM show${this.shard}.shared_op WHERE collection_id = $1 AND data_id =" +
       " $2 AND version >= $3 AND version < $4 ORDER BY version ASC",
       [collection, id, from, to],
       function (err, res) {
