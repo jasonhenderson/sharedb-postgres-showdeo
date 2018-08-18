@@ -8,6 +8,7 @@ function PostgresDB(options) {
   if (!(this instanceof PostgresDB)) return new PostgresDB(options);
 
   this.shard = options.shard || 1;
+  this.accountId = options.accountId;
 
   DB.call(this, options);
 
@@ -31,6 +32,7 @@ PostgresDB.prototype.close = function(callback) {
 // callback(err, succeeded)
 PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
 
+  console.log('committing sharedb doc', collection, id, '\n', op, '\n', snapshot, '\n', options);
   /*
    * op: CreateOp {
    *   src: '24545654654646',
@@ -73,9 +75,9 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
     const query = {
       name: 'sdb-commit-op-and-snap',
       text: `WITH snapshot_id AS (
-        INSERT INTO show${self.shard}.shared_snapshot (collection_id, data_id, data_type, version, data)
+        INSERT INTO show${self.shard}.shared_snapshot (collection_id, data_id, data_type, version, account_id, data)
         SELECT $1 collection_id, $2 data_id,
-               $3 snap_type, $4 snap_v, $5 snap_data
+               $3 snap_type, $4::int4 snap_v, $8 account, $5::jsonb snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
           FROM show${self.shard}.shared_snapshot
@@ -87,13 +89,13 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
           WHERE collection_id = $1 AND data_id = $2
           FOR UPDATE
         )
-        ON CONFLICT (collection_id, data_id) DO 
-          UPDATE SET data_type = $3, version = $4, data = $5
+        ON CONFLICT (data_id) DO 
+          UPDATE SET data_type = $3, version = $4::int4, data = $5::jsonb 
         RETURNING version
       )
-      INSERT INTO show${self.shard}.shared_op (collection_id, data_id, version, operation)
+      INSERT INTO show${self.shard}.shared_op (collection_id, data_id, version, account_id, operation)
       SELECT $1 collection_id, $2 data_id,
-             $6 op_v, $7 op
+             $6::int4 op_v, $8 account, $7::jsonb op
       WHERE (
         $6 = (
           SELECT max(version)+1
@@ -107,7 +109,14 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
       RETURNING version`,
       values: [
-        collection, id, snapshot.type, snapshot.v, snapshot.data, op.v, op,
+        collection,
+        id,
+        snapshot.type,
+        snapshot.v,
+        JSON.stringify(snapshot.data),
+        op.v,
+        JSON.stringify(op),
+        self.accountId,
       ],
     };
     client.query(query, (err, res) => {
