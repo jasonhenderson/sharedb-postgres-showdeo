@@ -5,10 +5,12 @@ const pg = require('pg');
 
 function PostgresDB(options) {
   if (!(this instanceof PostgresDB)) return new PostgresDB(options);
+
+  this.shard = options.shard || 1;
+
   DB.call(this, options);
 
   this.closed = false;
-  this.shard = options.shard || '1';
 
   this.pool = new pg.Pool(options);
 }
