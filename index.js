@@ -4,9 +4,10 @@ const pg = require('pg');
 // Postgres-backed ShareDB database
 
 function PostgresDB(options) {
+
   if (!(this instanceof PostgresDB)) return new PostgresDB(options);
 
-  this.shard = 1;//options.shard || 1;
+  this.shard = options.shard || 1;
 
   DB.call(this, options);
 
@@ -29,6 +30,7 @@ PostgresDB.prototype.close = function(callback) {
 // Persists an op and snapshot if it is for the next version. Calls back with
 // callback(err, succeeded)
 PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
+
   /*
    * op: CreateOp {
    *   src: '24545654654646',
@@ -39,6 +41,9 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
    * }
    * snapshot: PostgresSnapshot
    */
+
+  const self = this;
+
   this.pool.connect((err, client, done) => {
     if (err) {
       done(client);
@@ -68,17 +73,17 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
     const query = {
       name: 'sdb-commit-op-and-snap',
       text: `WITH snapshot_id AS (
-        INSERT INTO show${this.shard}.shared_snapshot (collection_id, data_id, data_type, version, data)
+        INSERT INTO show${self.shard}.shared_snapshot (collection_id, data_id, data_type, version, data)
         SELECT $1 collection_id, $2 data_id,
                $3 snap_type, $4 snap_v, $5 snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
-          FROM show${this.shard}.shared_snapshot
+          FROM show${self.shard}.shared_snapshot
           WHERE collection_id = $1 AND data_id = $2
           FOR UPDATE
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${this.shard}.shared_snapshot
+          FROM show${self.shard}.shared_snapshot
           WHERE collection_id = $1 AND data_id = $2
           FOR UPDATE
         )
@@ -86,17 +91,17 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
           UPDATE SET data_type = $3, version = $4, data = $5
         RETURNING version
       )
-      INSERT INTO show${this.shard}.shared_op (collection_id, data_id, version, operation)
+      INSERT INTO show${self.shard}.shared_op (collection_id, data_id, version, operation)
       SELECT $1 collection_id, $2 data_id,
              $6 op_v, $7 op
       WHERE (
         $6 = (
           SELECT max(version)+1
-          FROM show${this.shard}.shared_op
+          FROM show${self.shard}.shared_op
           WHERE collection_id = $1 AND data_id = $2
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${this.shard}.shared_op
+          FROM show${self.shard}.shared_op
           WHERE collection_id = $1 AND data_id = $2
         )
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
@@ -125,6 +130,9 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
 // snapshot). A snapshot with a version of zero is returned if the docuemnt
 // has never been created in the database.
 PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, callback) {
+
+  const self = this;
+
   this.pool.connect(function(err, client, done) {
     if (err) {
       done(client);
@@ -132,7 +140,7 @@ PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, cal
       return;
     }
     client.query(
-        `SELECT version, data, data_type FROM show${this.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = $2 LIMIT 1`,
+        `SELECT version, data, data_type FROM show${self.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = $2 LIMIT 1`,
         [collection, id],
         function(err, res) {
           done();
@@ -175,6 +183,9 @@ PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, cal
 //
 // Callback should be called as callback(error, [list of ops]);
 PostgresDB.prototype.getOps = function(collection, id, from, to, options, callback) {
+
+  const self = this;
+
   this.pool.connect(function(err, client, done) {
     if (err) {
       done(client);
@@ -185,7 +196,7 @@ PostgresDB.prototype.getOps = function(collection, id, from, to, options, callba
     // ZW: Add explicit row ordering here
     client.query(`
       SELECT version, operation 
-      FROM show${this.shard}.shared_op 
+      FROM show${self.shard}.shared_op 
       WHERE collection_id = $1 
         AND data_id = $2 
         AND version >= $3 
