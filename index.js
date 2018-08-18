@@ -1,5 +1,5 @@
-const DB = require("sharedb").DB;
-const pg = require("pg");
+const DB = require('sharedb').DB;
+const pg = require('pg');
 
 // Postgres-backed ShareDB database
 
@@ -8,7 +8,7 @@ function PostgresDB(options) {
   DB.call(this, options);
 
   this.closed = false;
-  this.shard = options.shard || "1";
+  this.shard = options.shard || '1';
 
   this.pool = new pg.Pool(options);
 }
@@ -17,17 +17,16 @@ module.exports = PostgresDB;
 
 PostgresDB.prototype = Object.create(DB.prototype);
 
-PostgresDB.prototype.close = function (callback) {
+PostgresDB.prototype.close = function(callback) {
   this.closed = true;
   this.pool.end();
 
   if (callback) callback();
 };
 
-
 // Persists an op and snapshot if it is for the next version. Calls back with
 // callback(err, succeeded)
-PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, callback) {
+PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
   /*
    * op: CreateOp {
    *   src: '24545654654646',
@@ -65,7 +64,7 @@ PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, c
     // implementation.  Catching up outdated clients who reconnect may be
     // buggy otherwise.
     const query = {
-      name: "sdb-commit-op-and-snap",
+      name: 'sdb-commit-op-and-snap',
       text: `WITH snapshot_id AS (
         INSERT INTO shared_snapshot (collection_id, data_id, data_type, version, data)
         SELECT $1 collection_id, $2 data_id,
@@ -101,8 +100,8 @@ PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, c
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
       RETURNING version`,
       values: [
-        collection, id, snapshot.type, snapshot.v, snapshot.data, op.v, op
-      ]
+        collection, id, snapshot.type, snapshot.v, snapshot.data, op.v, op,
+      ],
     };
     client.query(query, (err, res) => {
       if (err) {
@@ -123,43 +122,43 @@ PostgresDB.prototype.commit = function (collection, id, op, snapshot, options, c
 // Get the named document from the database. The callback is called with (err,
 // snapshot). A snapshot with a version of zero is returned if the docuemnt
 // has never been created in the database.
-PostgresDB.prototype.getSnapshot = function (collection, id, fields, options, callback) {
-  this.pool.connect(function (err, client, done) {
+PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, callback) {
+  this.pool.connect(function(err, client, done) {
     if (err) {
       done(client);
       callback(err);
       return;
     }
     client.query(
-      "SELECT version, data, data_type FROM show${this.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = $2 LIMIT 1",
-      [collection, id],
-      function (err, res) {
-        done();
-        if (err) {
-          callback(err);
-          return;
-        }
-        if (res.rows.length) {
-          const row = res.rows[0];
-          const snapshot = new PostgresSnapshot(
-            id,
-            row.version,
-            row.data_type,
-            row.data,
-            undefined // TODO: metadata
-          );
-          callback(null, snapshot);
-        } else {
-          const snapshot = new PostgresSnapshot(
-            id,
-            0,
-            null,
-            undefined,
-            undefined
-          );
-          callback(null, snapshot);
-        }
-      }
+        `SELECT version, data, data_type FROM show${this.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = $2 LIMIT 1`,
+        [collection, id],
+        function(err, res) {
+          done();
+          if (err) {
+            callback(err);
+            return;
+          }
+          if (res.rows.length) {
+            const row = res.rows[0];
+            const snapshot = new PostgresSnapshot(
+                id,
+                row.version,
+                row.data_type,
+                row.data,
+                undefined, // TODO: metadata
+            );
+            callback(null, snapshot);
+          } else {
+            const snapshot = new PostgresSnapshot(
+                id,
+                0,
+                null,
+                undefined,
+                undefined,
+            );
+            callback(null, snapshot);
+          }
+        },
     );
   });
 };
@@ -173,8 +172,8 @@ PostgresDB.prototype.getSnapshot = function (collection, id, fields, options, ca
 // The version will be inferred from the parameters if it is missing.
 //
 // Callback should be called as callback(error, [list of ops]);
-PostgresDB.prototype.getOps = function (collection, id, from, to, options, callback) {
-  this.pool.connect(function (err, client, done) {
+PostgresDB.prototype.getOps = function(collection, id, from, to, options, callback) {
+  this.pool.connect(function(err, client, done) {
     if (err) {
       done(client);
       callback(err);
@@ -182,20 +181,25 @@ PostgresDB.prototype.getOps = function (collection, id, from, to, options, callb
     }
 
     // ZW: Add explicit row ordering here
-    client.query(
-      "SELECT version, operation FROM show${this.shard}.shared_op WHERE collection_id = $1 AND data_id =" +
-      " $2 AND version >= $3 AND version < $4 ORDER BY version ASC",
-      [collection, id, from, to],
-      function (err, res) {
-        done();
-        if (err) {
-          callback(err);
-          return;
-        }
-        callback(null, res.rows.map(function (row) {
-          return row.operation;
-        }));
-      }
+    client.query(`
+      SELECT version, operation 
+      FROM show${this.shard}.shared_op 
+      WHERE collection_id = $1 
+        AND data_id = $2 
+        AND version >= $3 
+        AND version < $4 
+      ORDER BY version ASC`,
+        [collection, id, from, to],
+        function(err, res) {
+          done();
+          if (err) {
+            callback(err);
+            return;
+          }
+          callback(null, res.rows.map(function(row) {
+            return row.operation;
+          }));
+        },
     );
   });
 };
