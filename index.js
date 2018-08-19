@@ -8,7 +8,6 @@ function PostgresDB(options) {
   if (!(this instanceof PostgresDB)) return new PostgresDB(options);
 
   this.shard = options.shard || 1;
-  this.accountId = options.accountId;
 
   DB.call(this, options);
 
@@ -31,8 +30,6 @@ PostgresDB.prototype.close = function(callback) {
 // Persists an op and snapshot if it is for the next version. Calls back with
 // callback(err, succeeded)
 PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
-
-  console.log('committing sharedb doc', collection, id, '\n', op, '\n', snapshot, '\n', options);
   /*
    * op: CreateOp {
    *   src: '24545654654646',
@@ -116,7 +113,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
         JSON.stringify(snapshot.data),
         op.v,
         JSON.stringify(op),
-        self.accountId,
+        options.user.accountId,
       ],
     };
     client.query(query, (err, res) => {
