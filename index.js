@@ -30,6 +30,11 @@ PostgresDB.prototype.close = function(callback) {
 // Persists an op and snapshot if it is for the next version. Calls back with
 // callback(err, succeeded)
 PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
+
+  if (!options || !options.user) {
+    callback(new Error("Account credentials are required"));
+    return;
+  }
   /*
    * op: CreateOp {
    *   src: '24545654654646',
