@@ -79,7 +79,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
       text: `WITH snapshot_id AS (
         INSERT INTO show${self.shard}.shared_snapshot (collection_id, data_id, data_type, version, account_id, data)
         SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) data_id,
-               $3 snap_type, $4::int4 snap_v, $8 account, $5::jsonb snap_data
+               $3 snap_type, $4::int4 snap_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $5::jsonb snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
           FROM show${self.shard}.shared_snapshot
@@ -97,7 +97,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
       )
       INSERT INTO show${self.shard}.shared_op (collection_id, data_id, version, account_id, operation)
       SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) data_id,
-             $6::int4 op_v, $8 account, $7::jsonb op
+             $6::int4 op_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $7::jsonb op
       WHERE (
         $6 = (
           SELECT max(version)+1
@@ -118,7 +118,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
         JSON.stringify(snapshot.data),
         op.v,
         JSON.stringify(op),
-        options.user.accountId,
+        options.user.accountUrlId,
       ],
     };
     client.query(query, (err, res) => {
