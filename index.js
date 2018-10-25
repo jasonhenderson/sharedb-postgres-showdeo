@@ -96,18 +96,18 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
           UPDATE SET data_type = $3, version = $4::int4, data = $5::jsonb 
         RETURNING version
       )
-      INSERT INTO show${self.shard}.resource_op (collection_id, data_id, version, account_id, operation)
-      SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) data_id,
+      INSERT INTO show${self.shard}.resource_op (data_id, version, account_id, operation)
+      SELECT public.pseudo_encrypt(public.bigintify_string($2)) data_id,
              $6::int4 op_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $7::jsonb op
       WHERE (
         $6 = (
           SELECT max(version)+1
           FROM show${self.shard}.resource_op
-          WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
         ) OR NOT EXISTS (
           SELECT 1
           FROM show${self.shard}.resource_op
-          WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
         )
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
       RETURNING version`,
@@ -209,8 +209,7 @@ PostgresDB.prototype.getOps = function(collection, id, from, to, options, callba
     client.query(`
       SELECT version, operation 
       FROM show${self.shard}.resource_op 
-      WHERE collection_id = $1 
-        AND data_id = public.pseudo_encrypt(public.bigintify_string($2)) 
+      WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2)) 
         AND version >= $3 
         AND version < $4 
       ORDER BY version ASC`,
