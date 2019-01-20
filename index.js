@@ -207,7 +207,7 @@ PostgresDB.prototype.getOps = function(collection, id, from, to, options, callba
 
     // ZW: Add explicit row ordering here
     client.query(`
-      SELECT version, operation 
+      SELECT version, operation, $1 collection_id 
       FROM show${self.shard}.resource_op 
       WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2)) 
         AND version >= $3 
