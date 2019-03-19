@@ -78,17 +78,17 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
       name: 'sdb-commit-op-and-snap',
       text: `
       WITH snapshot_id AS (
-        INSERT INTO show${self.shard}.resource_snapshot (collection_id, data_id, data_type, version, account_id, data)
+        INSERT INTO show${self.shard}.shared_snapshot (collection_id, data_id, data_type, version, account_id, data)
         SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) data_id,
                $3 snap_type, $4::int4 snap_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $5::jsonb snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
-          FROM show${self.shard}.resource_snapshot
+          FROM show${self.shard}.shared_snapshot
           WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
           FOR UPDATE
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${self.shard}.resource_snapshot
+          FROM show${self.shard}.shared_snapshot
           WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
           FOR UPDATE
         )
@@ -96,17 +96,17 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
           UPDATE SET data_type = $3, version = $4::int4, data = $5::jsonb 
         RETURNING version
       )
-      INSERT INTO show${self.shard}.resource_op (data_id, version, account_id, operation)
+      INSERT INTO show${self.shard}.shared_op (data_id, version, account_id, operation)
       SELECT public.pseudo_encrypt(public.bigintify_string($2)) data_id,
              $6::int4 op_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $7::jsonb op
       WHERE (
         $6 = (
           SELECT max(version)+1
-          FROM show${self.shard}.resource_op
+          FROM show${self.shard}.shared_op
           WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${self.shard}.resource_op
+          FROM show${self.shard}.shared_op
           WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
         )
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
@@ -152,7 +152,7 @@ PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, cal
       return;
     }
     client.query(
-        `SELECT version, data, data_type FROM show${self.shard}.resource_snapshot WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2)) LIMIT 1`,
+        `SELECT version, data, data_type FROM show${self.shard}.shared_snapshot WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2)) LIMIT 1`,
         [collection, id],
         function(err, res) {
           done();
@@ -208,7 +208,7 @@ PostgresDB.prototype.getOps = function(collection, id, from, to, options, callba
     // ZW: Add explicit row ordering here
     client.query(`
       SELECT version, operation, $1 collection_id 
-      FROM show${self.shard}.resource_op 
+      FROM show${self.shard}.shared_op 
       WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2)) 
         AND version >= $3 
         AND version < $4 
