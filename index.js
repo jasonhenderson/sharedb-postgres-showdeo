@@ -1,5 +1,7 @@
-const DB = require('sharedb').DB;
-const pg = require('pg');
+const DB = require("sharedb").DB;
+const pg = require("pg");
+// const short = require("short-uuid");
+// const translator = short();
 
 // Postgres-backed ShareDB database
 
@@ -9,12 +11,40 @@ function PostgresDB(options) {
 
   this.shard = options.shard || 1;
 
+  // Default the snapshot and op table names
+  // This may be determined in the operation
+  this.table = options.table || "resource";
+
   DB.call(this, options);
 
   this.closed = false;
 
   this.pool = new pg.Pool(options);
 }
+
+function getTable(collection) {
+  switch (collection) {
+    case "5":
+      return "interaction";
+    case "4":
+      return "flashcard";
+    case "3":
+      return "flashcard_deck";
+    default:
+      return "resource";
+  }
+}
+
+// function processId(collection, id) {
+//   switch (collection) {
+//     case "5":
+//     case "4":
+//     case "3":
+//       return translator.toUUID(id);
+//     default:
+//       return id;
+//   }
+// }
 
 module.exports = PostgresDB;
 
@@ -32,7 +62,7 @@ PostgresDB.prototype.close = function(callback) {
 PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, callback) {
 
   if (!options || !options.user) {
-    callback(new Error('Account credentials are required'));
+    callback(new Error("Account credentials are required"));
     return;
   }
   /*
@@ -47,6 +77,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
    */
 
   const self = this;
+  self.table = getTable(collection);
 
   this.pool.connect((err, client, done) => {
     if (err) {
@@ -75,39 +106,39 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
     // implementation.  Catching up outdated clients who reconnect may be
     // buggy otherwise.
     const query = {
-      name: 'sdb-commit-op-and-snap',
+      name: "sdb-commit-op-and-snap",
       text: `
       WITH snapshot_id AS (
-        INSERT INTO show${self.shard}.resource_snapshot (collection_id, data_id, data_type, version, account_id, data)
-        SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) data_id,
+        INSERT INTO show${self.shard}.${self.table}_snapshot (collection_id, id, data_type, version, account_id, data)
+        SELECT $1 collection_id, public.pseudo_encrypt(public.bigintify_string($2)) id,
                $3 snap_type, $4::int4 snap_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $5::jsonb snap_data
         WHERE $4 = (
           SELECT version+1 snap_v
-          FROM show${self.shard}.resource_snapshot
-          WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          FROM show${self.shard}.${self.table}_snapshot
+          WHERE collection_id = $1 AND id = public.pseudo_encrypt(public.bigintify_string($2))
           FOR UPDATE
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${self.shard}.resource_snapshot
-          WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          FROM show${self.shard}.${self.table}_snapshot
+          WHERE collection_id = $1 AND id = public.pseudo_encrypt(public.bigintify_string($2))
           FOR UPDATE
         )
-        ON CONFLICT (data_id) DO 
+        ON CONFLICT (id) DO 
           UPDATE SET data_type = $3, version = $4::int4, data = $5::jsonb 
         RETURNING version
       )
-      INSERT INTO show${self.shard}.resource_op (data_id, version, account_id, operation)
-      SELECT public.pseudo_encrypt(public.bigintify_string($2)) data_id,
+      INSERT INTO show${self.shard}.${self.table}_op (id, version, account_id, operation)
+      SELECT public.pseudo_encrypt(public.bigintify_string($2)) id,
              $6::int4 op_v, public.pseudo_encrypt(public.bigintify_string($8)) account, $7::jsonb op
       WHERE (
         $6 = (
           SELECT max(version)+1
-          FROM show${self.shard}.resource_op
-          WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          FROM show${self.shard}.${self.table}_op
+          WHERE id = public.pseudo_encrypt(public.bigintify_string($2))
         ) OR NOT EXISTS (
           SELECT 1
-          FROM show${self.shard}.resource_op
-          WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2))
+          FROM show${self.shard}.${self.table}_op
+          WHERE id = public.pseudo_encrypt(public.bigintify_string($2))
         )
       ) AND EXISTS (SELECT 1 FROM snapshot_id)
       RETURNING version`,
@@ -144,6 +175,7 @@ PostgresDB.prototype.commit = function(collection, id, op, snapshot, options, ca
 PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, callback) {
 
   const self = this;
+  self.table = getTable(collection);
 
   this.pool.connect(function(err, client, done) {
     if (err) {
@@ -152,35 +184,35 @@ PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, cal
       return;
     }
     client.query(
-        `SELECT version, data, data_type FROM show${self.shard}.resource_snapshot WHERE collection_id = $1 AND data_id = public.pseudo_encrypt(public.bigintify_string($2)) LIMIT 1`,
-        [collection, id],
-        function(err, res) {
-          done();
-          if (err) {
-            callback(err);
-            return;
-          }
-          if (res.rows.length) {
-            const row = res.rows[0];
-            const snapshot = new PostgresSnapshot(
-                id,
-                row.version,
-                row.data_type,
-                row.data,
-                undefined, // TODO: metadata
-            );
-            callback(null, snapshot);
-          } else {
-            const snapshot = new PostgresSnapshot(
-                id,
-                0,
-                null,
-                undefined,
-                undefined,
-            );
-            callback(null, snapshot);
-          }
-        },
+      `SELECT version, data, data_type FROM show${self.shard}.${self.table}_snapshot WHERE collection_id = $1 AND id = public.pseudo_encrypt(public.bigintify_string($2)) LIMIT 1`,
+      [collection, id],
+      (err, res) => {
+        done();
+        if (err) {
+          callback(err);
+          return;
+        }
+        if (res.rows.length) {
+          const row = res.rows[0];
+          const snapshot = new PostgresSnapshot(
+            id,
+            row.version,
+            row.data_type,
+            row.data,
+            undefined, // TODO: metadata
+          );
+          callback(null, snapshot);
+        } else {
+          const snapshot = new PostgresSnapshot(
+            id,
+            0,
+            null,
+            undefined,
+            undefined,
+          );
+          callback(null, snapshot);
+        }
+      },
     );
   });
 };
@@ -194,11 +226,12 @@ PostgresDB.prototype.getSnapshot = function(collection, id, fields, options, cal
 // The version will be inferred from the parameters if it is missing.
 //
 // Callback should be called as callback(error, [list of ops]);
-PostgresDB.prototype.getOps = function(collection, id, from, to, options, callback) {
+PostgresDB.prototype.getOps = (collection, id, from, to, options, callback) => {
 
   const self = this;
+  self.table = getTable(collection);
 
-  this.pool.connect(function(err, client, done) {
+  this.pool.connect((err, client, done) => {
     if (err) {
       done(client);
       callback(err);
@@ -208,22 +241,22 @@ PostgresDB.prototype.getOps = function(collection, id, from, to, options, callba
     // ZW: Add explicit row ordering here
     client.query(`
       SELECT version, operation, $1 collection_id 
-      FROM show${self.shard}.resource_op 
-      WHERE data_id = public.pseudo_encrypt(public.bigintify_string($2)) 
+      FROM show${self.shard}.${self.table}_op 
+      WHERE id = public.pseudo_encrypt(public.bigintify_string($2)) 
         AND version >= $3 
         AND version < $4 
       ORDER BY version ASC`,
-        [collection, id, from, to],
-        function(err, res) {
-          done();
-          if (err) {
-            callback(err);
-            return;
-          }
-          callback(null, res.rows.map(function(row) {
-            return row.operation;
-          }));
-        },
+    [collection, id, from, to],
+    (err, res) => {
+      done();
+      if (err) {
+        callback(err);
+        return;
+      }
+      callback(null, res.rows.map((row) => {
+        return row.operation;
+      }));
+    },
     );
   });
 };
